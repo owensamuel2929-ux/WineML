@@ -249,7 +249,7 @@ sample size is simply smaller than 1,599 suggests.
 
 - **Regression to the mean.** The regressor rarely predicts extreme scores (3 or
   8) because few such wines exist. Predictions cluster in the 5–6 range.
-- **R² is modest (~0.3–0.45).** Most quality variation is driven by factors this
+- **R² is modest (0.504).** Most quality variation is driven by factors this
   dataset does not capture — grape variety, vintage, winemaking technique.
 - **No causal claims.** Feature importances are statistical associations.
 - **Red wine only.** The white wine dataset is not included.
