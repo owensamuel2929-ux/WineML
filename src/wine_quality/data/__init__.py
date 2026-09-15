@@ -1,0 +1,1 @@
+"""Data access, validation, and schema contracts."""

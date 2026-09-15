@@ -1,0 +1,34 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Environments ---
+.venv/
+venv/
+.env
+
+# --- Tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# --- ML artifacts (reproducible via `make train`) ---
+models/*.joblib
+models/*.json
+!models/.gitkeep
+
+# --- Reports (generated per run) ---
+reports/*
+!reports/.gitkeep
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- macOS ---
+.DS_Store

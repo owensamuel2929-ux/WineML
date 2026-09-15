@@ -1,0 +1,107 @@
+# Compose topology for the wine-quality platform.
+#
+#   docker compose up                      -> API + dashboard (fast, for demos)
+#   docker compose --profile train up      -> also runs training first
+#
+# The API and dashboard are separate services so the model can be consumed by
+# other clients, and so the dashboard can restart without dropping the model.
+
+name: wine-quality
+
+services:
+  # -------------------------------------------------------------------------
+  # Training: one-shot job that writes artifacts into the shared volume.
+  # Gated behind a profile because it cross-validates six pipelines and takes
+  # noticeably longer than starting the services.
+  # -------------------------------------------------------------------------
+  train:
+    build:
+      context: .
+      target: training
+    profiles: ["train"]
+    volumes:
+      - ./raw_data:/app/raw_data:ro
+      - model-artifacts:/app/models
+      - ./reports:/app/reports
+    environment:
+      WINE_GOOD_QUALITY_CUTOFF: ${WINE_GOOD_QUALITY_CUTOFF:-7}
+      WINE_TEST_SIZE: ${WINE_TEST_SIZE:-0.2}
+      WINE_RANDOM_STATE: ${WINE_RANDOM_STATE:-42}
+    command: ["python", "-m", "wine_quality.models.train"]
+    restart: "no"
+
+  # -------------------------------------------------------------------------
+  # API: serves both pipelines over HTTP.
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Read-only: the API must never write to the artifact store.
+      - model-artifacts:/app/models:ro
+      - ./raw_data:/app/raw_data:ro
+    environment:
+      WINE_GOOD_QUALITY_CUTOFF: ${WINE_GOOD_QUALITY_CUTOFF:-7}
+      WINE_API_PORT: 8000
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Dashboard: Streamlit UI. Talks to the API over HTTP rather than importing
+  # the models, so the service boundary is exercised for real.
+  # -------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    volumes:
+      # Read-only: the dashboard reads the CSV for EDA and metrics for charts.
+      - ./raw_data:/app/raw_data:ro
+      - ./reports:/app/reports:ro
+      # Read-only: the Model Performance page inspects the artifacts directly to
+      # draw ROC/PR curves and residuals. Predictions still go through the API —
+      # this mount is for the analyst view, not the production path.
+      - model-artifacts:/app/models:ro
+    environment:
+      WINE_API_BASE_URL: http://api:8000
+      WINE_API_TIMEOUT_SECONDS: ${WINE_API_TIMEOUT_SECONDS:-10}
+    command:
+      - streamlit
+      - run
+      - app/Overview.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://localhost:8501/_stcore/health').status==200 else 1)"
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  # Shared between the training job (writer) and the API (reader).
+  model-artifacts:
