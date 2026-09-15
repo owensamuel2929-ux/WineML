@@ -218,6 +218,71 @@ Those tests pin the behaviour explicitly.
 
 ---
 
+## Deployment
+
+The compose setup above is the **development** topology: two services that can
+be restarted independently. Public hosts that publish a single port need a
+different arrangement, so `deploy/huggingface/` packages the same two services
+into one container behind nginx.
+
+```
+browser
+   │
+   ▼   :7860  (the only published port)
+──────────────┐
+│    nginx     │
+└──┬────────┬──┘
+   │        │
+   │  /api/ │  /  (everything else)
+   ▼        ▼
+ FastAPI  Streamlit        both on loopback, 127.0.0.1
+ :8000     :7861
+```
+
+The dashboard still reaches the API over HTTP rather than importing the models,
+so the service boundary survives the merge — the deployed topology has the same
+shape as the compose one, not a different architecture.
+
+### Why a separate repository
+
+Hugging Face only auto-detects a Dockerfile named `Dockerfile` at the repository
+root, and its README frontmatter must sit there too. Neither can be relocated by
+configuration, so the Space is assembled as its own repository by
+`scripts/deploy_hf_space.sh`. The main project keeps its two-service compose
+setup untouched.
+
+### Deploying
+
+```bash
+pip install -U "huggingface_hub[cli]"
+hf auth login
+
+make train                        # artifacts are baked into the image
+./scripts/deploy_hf_space.sh <hf-username>/<space-name>
+```
+
+The script refuses to deploy without model artifacts. A Space has no compose
+volume, so the ~16 MB of `.joblib` files are baked into the image; shipping
+without them would start the API in its degraded state and return 503 on every
+prediction.
+
+### Platform constraints that shaped this
+
+| Constraint | Consequence |
+|---|---|
+| One published port | nginx multiplexes `/` and `/api/` on 7860 |
+| Container runs as UID 1000 | nginx `pid` and temp paths moved under `/tmp` |
+| Build context has a size budget | `.dockerignore` keeps the context at ~17 MB |
+| No compose volumes | Model artifacts are copied into the image |
+
+`deploy/huggingface/entrypoint.py` supervises all three processes and tears the
+container down if any one of them exits. That matters: with a bare `&` and
+`wait`, a crashed API would leave nginx serving a dashboard whose every
+prediction fails — a half-broken demo that is far harder to diagnose than a
+failed deployment.
+
+---
+
 ## Design decisions
 
 **Why two models instead of one?** The score and the probability answer different
